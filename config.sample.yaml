@@ -1,0 +1,11 @@
+input_parquet: triples_formed.parquet
+sample_size: 256
+output_root: artifacts/first_delivery
+model: /data/cloudroot/minimax-m2.5-deploy/models/MiniMax-M2.5
+base_url: http://127.0.0.1:8000/v1
+api_key: EMPTY
+concurrency: 16
+stage1_max_tokens: 1200
+stage2_max_tokens: 1600
+temperature: 0.2
+timeout: 300.0

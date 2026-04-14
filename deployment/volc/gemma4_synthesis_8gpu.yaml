@@ -1,0 +1,53 @@
+TaskName: "protllm-sft-gemma4-31b-synthesis-8gpu-v3"
+Description: "In-process vLLM synthesis for ProtLLM SFT-QA with Gemma-4-31B-it on 8 GPUs."
+Entrypoint: |-
+  source /GenSIvePFS/users/yfwang/miniconda3/etc/profile.d/conda.sh
+  cd /GenSIvePFS/users/yfwang/protllm-sft-data-synthesis
+  export ENV_PREFIX=/GenSIvePFS/users/yfwang/miniconda3/envs/protllm-sft-vllm
+  export MODEL_PATH=/GenSIvePFS/users/model/gemma-4-31B-it
+  export INPUT_PARQUET=data/triples_formed.parquet
+  export OUTPUT_ROOT=artifacts/first_delivery_gemma4
+  export SAMPLE_SIZE=256
+  export STAGE1_BATCH_SIZE=32
+  export STAGE2_BATCH_SIZE=32
+  export MAX_NUM_SEQS=64
+  export MAX_MODEL_LEN=32768
+  export GPU_MEMORY_UTILIZATION=0.92
+  export TP_SIZE=8
+  bash scripts/volc_launch_gemma4_synthesis.sh
+ImageUrl: "vemlp-cn-beijing.cr.volces.com/preset-images/cuda:12.8.1-py3.12-ubuntu22.04"
+ResourceQueueID: "q-20250929101814-vmcz2"
+ResourceQueueName: "sia-thu"
+Framework: "Custom"
+ActiveDeadlineSeconds: 864000
+DelayExitTimeSeconds: 0
+TaskRoleSpecs:
+  - RoleName: worker
+    RoleReplicas: 1
+    Flavor: "ml.pni2.28xlarge"
+EnableTensorBoard: true
+Storages:
+  - Type: Vepfs
+    MountPath: /GenSIvePFS/users/model
+    SubPath: users/model
+  - Type: Vepfs
+    MountPath: /GenSIvePFS/users/yfwang
+    SubPath: users/yfwang
+Preemptible: false
+Priority: 4
+TensorBoardStorage:
+  Type: "Vepfs"
+  SubPath: "users/yfwang/tensorboard_logs"
+AccessType: "Public"
+RetryOptions:
+  EnableRetry: false
+  EnableReserveResourceOnRetry: false
+DiagOptions:
+  - Name: EnvironmentalDiagnosis
+    Enable: false
+  - Name: PythonDetection
+    Enable: false
+  - Name: LogDetection
+    Enable: false
+  - Name: VecclHangDetection
+    Enable: false

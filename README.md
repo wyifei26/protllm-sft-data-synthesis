@@ -44,7 +44,7 @@ SFT-QA仅包含question-answer风格的数据，输入是question，输出是ans
 2. 第二次扫描：对于四种不同的任务形式，给模型完整的json元数据summary，让模型根据任务要求自行抽取相关信息并生成QA对
     - 对于每个任务，都要精心设计数据合成的prompt，让模型能够准确理解任务要求，并通过其自身的知识来抽取信息合成数据。
 
-部署模型`/data/cloudroot/minimax-m2.5-deploy/models/MiniMax-M2.5`来进行数据合成。
+现在默认使用本地模型`/GenSIvePFS/users/model/gemma-4-31B-it`，并在 Python 进程内通过 `vllm.LLM` 直接完成数据合成，不再依赖单独启动的 OpenAI 兼容 HTTP 服务。
 
 由于LLM看不懂sequence token和structure token，因此在数据合成的prompt中，用占位符来表示这两种token。
 
@@ -108,50 +108,50 @@ mkdir -p data
 # 然后把 triples_formed.parquet 等数据文件拷贝到 data/
 ```
 
-### 启动 vLLM
+### 配置环境
 
-模型路径使用 README 中指定的本地模型：
+推荐直接创建一个独立 conda 环境：
 
 ```bash
-source /data/yfwang/miniconda3/etc/profile.d/conda.sh
-conda activate /data/yfwang/sft-data/.conda-env
-bash scripts/start_vllm_minimax.sh
+bash scripts/setup_env.sh
 ```
 
-默认参数使用 8 卡 expert parallel，并设置：
+默认会创建：
 
-- `TP_SIZE=8`
-- `MAX_MODEL_LEN=32768`
-- `--compilation-config '{"cudagraph_mode":"PIECEWISE"}'`
-
-这些设置的目标是先稳定打通服务，再逐步调高并发和上下文长度。
+- 环境路径：`/GenSIvePFS/users/yfwang/miniconda3/envs/protllm-sft-vllm`
+- Python：`3.12`
+- 关键依赖：`vllm`、`transformers`、`pyarrow`、`tqdm`
 
 ### 运行第一版 pipeline
 
-先做结构验证：
+先做结构验证，不加载模型：
 
 ```bash
-source /data/yfwang/miniconda3/etc/profile.d/conda.sh
-conda activate /data/yfwang/sft-data/.conda-env
+source /GenSIvePFS/users/yfwang/miniconda3/etc/profile.d/conda.sh
+conda activate /GenSIvePFS/users/yfwang/miniconda3/envs/protllm-sft-vllm
 PYTHONPATH=. python scripts/run_first_delivery.py --dry-run
 ```
 
-接 vLLM 真跑：
+再用 8 卡 in-process vLLM 真跑：
 
 ```bash
-source /data/yfwang/miniconda3/etc/profile.d/conda.sh
-conda activate /data/yfwang/sft-data/.conda-env
-PYTHONPATH=. python scripts/run_first_delivery.py \
-  --sample-size 256 \
-  --concurrency 16 \
-  --input-parquet data/triples_formed.parquet \
-  --base-url http://127.0.0.1:8000/v1 \
-  --model /data/cloudroot/minimax-m2.5-deploy/models/MiniMax-M2.5
+bash scripts/run_first_delivery_vllm_8gpu.sh
+```
+
+如需覆盖参数，例如放大吞吐：
+
+```bash
+SAMPLE_SIZE=256 \
+STAGE1_BATCH_SIZE=48 \
+STAGE2_BATCH_SIZE=48 \
+MAX_NUM_SEQS=96 \
+GPU_MEMORY_UTILIZATION=0.95 \
+bash scripts/run_first_delivery_vllm_8gpu.sh
 ```
 
 ### 输出产物
 
-默认输出目录：`artifacts/first_delivery/sample_256/`
+默认输出目录：`artifacts/first_delivery_gemma4/sample_256/`
 
 - `sample_records.jsonl`：抽样后的标准化输入
 - `stage1_summaries.jsonl`：第一次扫描 summary 结果

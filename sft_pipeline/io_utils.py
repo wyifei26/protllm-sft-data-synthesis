@@ -10,7 +10,7 @@ from .config import RunConfig
 
 
 def read_sample_records(config: RunConfig) -> list[dict[str, Any]]:
-    table = pq.read_table(config.input_parquet).slice(0, config.sample_size)
+    table = pq.read_table(config.input_parquet).slice(config.start_offset, config.sample_size)
     rows = table.to_pylist()
     parsed_rows = []
     for row in rows:
@@ -34,9 +34,26 @@ def _normalize_row(row: dict[str, Any], config: RunConfig) -> dict[str, Any]:
     return normalized
 
 
+def extract_primary_accession(row: dict[str, Any]) -> str | None:
+    accession = row.get("primary_accession") or row.get("primary_access") or row.get("accession")
+    if accession is None:
+        return None
+    accession_text = str(accession).strip()
+    return accession_text or None
+
+
 def dump_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+
+def append_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

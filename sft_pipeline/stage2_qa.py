@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from tqdm import tqdm
 
 from .config import RunConfig
-from .llm_client import LocalChatClient
+from .io_utils import append_jsonl, extract_primary_accession, load_jsonl
+from .llm_client import JSONClient
 from .prompts import build_stage2_messages, dry_run_stage2
 
 
@@ -14,8 +14,13 @@ def run_stage2(
     records: list[dict[str, Any]],
     stage1_records: list[dict[str, Any]],
     config: RunConfig,
+    client: JSONClient | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    stage1_map = {row["primary_accession"]: row for row in stage1_records}
+    stage1_map: dict[str, dict[str, Any]] = {}
+    for row in stage1_records:
+        accession = extract_primary_accession(row)
+        if accession:
+            stage1_map[accession] = row
     if config.dry_run:
         outputs = [
             _materialize_modalities(record, dry_run_stage2(record, stage1_map[record["primary_accession"]], config), config)
@@ -34,42 +39,45 @@ def run_stage2(
         ]
         return outputs, usage
 
-    client = LocalChatClient(config)
-    outputs: list[dict[str, Any]] = []
+    outputs: list[dict[str, Any]] = load_jsonl(config.stage2_path) if config.stage2_path.exists() else []
     usage_rows: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=config.concurrency) as executor:
-        future_map = {
-            executor.submit(
-                _run_one_stage2,
-                client,
-                record,
-                stage1_map[record["primary_accession"]],
-                config,
-            ): record["primary_accession"]
-            for record in records
-        }
-        for future in tqdm(as_completed(future_map), total=len(future_map), desc="stage2"):
-            result, usage = future.result()
+    if client is None:
+        raise ValueError("run_stage2 requires a JSON client when dry_run is False")
+
+    completed_accessions = {
+        accession
+        for row in outputs
+        if (accession := extract_primary_accession(row)) is not None
+    }
+    pending_records: list[dict[str, Any]] = []
+    seen_pending_accessions: set[str] = set()
+    for record in records:
+        accession = record["primary_accession"]
+        if accession in seen_pending_accessions:
+            continue
+        if accession not in stage1_map or accession in completed_accessions:
+            continue
+        seen_pending_accessions.add(accession)
+        pending_records.append(record)
+
+    for start in tqdm(range(0, len(pending_records), config.stage2_batch_size), desc="stage2"):
+        batch_records = pending_records[start : start + config.stage2_batch_size]
+        batch_messages = [
+            build_stage2_messages(record, stage1_map[record["primary_accession"]], config)
+            for record in batch_records
+        ]
+        batch_outputs, batch_usage = client.generate_json_batch(batch_messages, max_tokens=config.stage2_max_tokens)
+        materialized_outputs = [
+            _materialize_modalities(record, result, config)
+            for record, result in zip(batch_records, batch_outputs)
+        ]
+        append_jsonl(config.stage2_path, materialized_outputs)
+        for record, result, usage in zip(batch_records, materialized_outputs, batch_usage):
+            usage["primary_accession"] = record["primary_accession"]
+            usage["stage"] = "stage2"
             outputs.append(result)
             usage_rows.append(usage)
-    outputs.sort(key=lambda item: item["primary_accession"])
-    usage_rows.sort(key=lambda item: item["primary_accession"])
     return outputs, usage_rows
-
-
-def _run_one_stage2(
-    client: LocalChatClient,
-    record: dict[str, Any],
-    summary_record: dict[str, Any],
-    config: RunConfig,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    result, usage = client.generate_json(
-        build_stage2_messages(record, summary_record, config),
-        max_tokens=config.stage2_max_tokens,
-    )
-    usage["primary_accession"] = record["primary_accession"]
-    usage["stage"] = "stage2"
-    return _materialize_modalities(record, result, config), usage
 
 
 def _materialize_modalities(record: dict[str, Any], result: dict[str, Any], config: RunConfig) -> dict[str, Any]:
